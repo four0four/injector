@@ -107,6 +107,7 @@ int injector_attach(injector_t **injector_out, pid_t pid)
     *injector_out = injector;
     return 0;
 error_exit:
+    fprintf(stderr, "wtf!\n");
     injector_detach(injector);
     return rv;
 }
@@ -145,6 +146,52 @@ int injector_inject(injector_t *injector, const char *path)
         return INJERR_ERROR_IN_TARGET;
     }
     return 0;
+}
+
+int injector_open_lib(injector_t *this, library_t *libr_out, char *name) {
+  char buf[PATH_MAX+1] = {0};
+  char perms[5] = {0};
+  FILE *fp = NULL;
+  unsigned long saddr, eaddr = 0;
+
+  snprintf(buf, PATH_MAX, "/proc/%u/maps", this->pid);
+  fp = fopen(buf, "r");
+  if (!fp) {
+    injector__set_errmsg("failed to open %s. (error: %s)", buf, strerror(errno));
+    return INJERR_OTHER;
+  }
+  while (fgets(buf, sizeof(buf)-1, fp) != NULL) {
+    // first page isn't always x...but it is always the base :( XXX TODO
+    if (sscanf(buf, "%lx-%lx %4s", &saddr, &eaddr, perms) == 3) {
+      char *p = strstr(buf, name);
+      if (p != NULL) {
+        //p += strlen(name);
+        p = strchr(buf, '/');
+        strchr(p, '\n')[0] = 0;
+        fclose(fp);
+        fp = fopen(p, "r");
+        if(fp == NULL) {
+          injector__set_errmsg("failed to open %s. (error: %s)", p, strerror(errno));
+          return INJERR_NO_LIBRARY;
+        }
+        libr_out->base = saddr;
+        libr_out->fp = fp;
+        libr_out->filepath = strdup(p);
+        return INJERR_SUCCESS;
+      }
+    }
+  }
+  injector__set_errmsg("failed to identify mapped library %s in process %u", name, this->pid);
+  return INJERR_NO_LIBRARY;
+}
+
+void injector_close_lib(library_t *libr) {
+  if(libr->filepath)
+    free(libr->filepath);
+  if(libr->strtab)
+    free(libr->strtab);
+  fclose(libr->fp);
+  memset(libr, 0, sizeof(library_t));
 }
 
 int injector_detach(injector_t *injector)

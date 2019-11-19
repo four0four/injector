@@ -46,7 +46,7 @@ static pid_t find_process(const char *name)
         exit(1);
     }
     while ((dent = readdir(dir)) != NULL) {
-        char path[40];
+        char path[PATH_MAX];
         char exepath[PATH_MAX];
         ssize_t len;
         char *exe;
@@ -150,6 +150,26 @@ int main(int argc, char **argv)
             fprintf(stderr, "  %s\n", injector_error());
         }
     }
+
+    library_t libc;
+    libc.strtab = NULL;
+    if (injector_open_lib(injector, &libc, "libc-2.30.so")){
+      injector_detach(injector);
+      return -1;
+    }
+
+    int *(*exit_ptr)(int code) = NULL;
+    long rv = 0;
+    int r = 0;
+    if(lib_sym_lookup(&libc, "exit", &exit_ptr))
+      printf("bad: %s\n", injector_error());
+    printf("libc fp: %p, filepath: %s, base: %16lx\n", libc.fp, libc.filepath, libc.base);
+    printf("exit ptr: %p\n", exit_ptr);
+    injector__call_function(injector, &rv, exit_ptr, 1337);
+//    int r = injector__call_syscall(injector, &rv, 60, 1337);
+    printf("exit: %lx\n", rv);
+    printf("call: %x\n", r);
+    injector_close_lib(&libc);
     injector_detach(injector);
     return 0;
 }

@@ -31,6 +31,7 @@
 #include <sys/user.h>
 #include <sys/ptrace.h>
 #include <errno.h>
+#include <stdio.h>
 #include "injector.h"
 
 #ifdef __LP64__

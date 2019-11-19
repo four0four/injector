@@ -4,7 +4,7 @@ CFLAGS = -Wall -fPIC -I../../include
 all: libinjector.so libinjector.a
 
 libinjector.so: $(INJECTOR_OBJS)
-	$(CC) -shared -o libinjector.so $(INJECTOR_OBJS)
+	$(CC) -shared -o libinjector.so $(INJECTOR_OBJS) $(CFLAGS)
 
 libinjector.a: $(INJECTOR_OBJS)
 	$(AR) rcs libinjector.a $(INJECTOR_OBJS)

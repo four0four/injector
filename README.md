@@ -1,6 +1,12 @@
-# Injector
+# Injector-patched
 
 **Library for injecting a shared library into a Linux or Windows process**
+
+Patch notes:
+
+* fixed elf strtab parser (now reads and caches strtab per-library)
+* added arbitrary remote library calls
+* exposed remote function/syscall to "client"
 
 ## Linux
 

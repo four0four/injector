@@ -55,9 +55,19 @@ extern "C" {
 #define INJERR_WAIT_TRACEE -11         /* linux */
 
 typedef struct injector injector_t;
+typedef struct library library_t;
+
+struct library {
+	FILE *fp;
+	char *filepath;
+	size_t base;
+	char *strtab;
+};
 
 int injector_attach(injector_t **injector, injector_pid_t pid);
 int injector_inject(injector_t *injector, const char *path);
+int injector_open_lib(injector_t *this, library_t *libr_out, char *name);
+void injector_close_lib(library_t *libr);
 int injector_detach(injector_t *injector);
 const char *injector_error(void);
 

@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <elf.h>
 #include "injector_internal.h"
+#include "injector.h"
 
 #ifdef __LP64__
 #define Elf_Ehdr Elf64_Ehdr
@@ -195,7 +196,6 @@ cleanup:
     fclose(fp);
     return rv;
 }
-
 static int open_libc(FILE **fp_out, pid_t pid, size_t *addr)
 {
     char buf[512];
@@ -209,6 +209,7 @@ static int open_libc(FILE **fp_out, pid_t pid, size_t *addr)
     }
     while (fgets(buf, sizeof(buf), fp) != NULL) {
         unsigned long saddr, eaddr;
+        // TODO: this isn't entirely correct...we aren't matching the -xp bit
         if (sscanf(buf, "%lx-%lx r-xp", &saddr, &eaddr) == 2) {
             char *p = strstr(buf, "/libc-2.");
             if (p != NULL) {
@@ -238,6 +239,121 @@ static int open_libc(FILE **fp_out, pid_t pid, size_t *addr)
     fclose(fp);
     injector__set_errmsg("Could not find libc");
     return INJERR_NO_LIBRARY;
+}
+
+int lib_sym_lookup(library_t *libr, char *sym_name, void** p_func) {
+  Elf_Ehdr ehdr;
+  Elf_Shdr shdr;
+  size_t shstrtab_offset;
+  size_t str_offset = 0;
+  size_t str_size = 0;
+  size_t sym_offset = 0;
+  size_t sym_num = 0;
+  size_t sym_entsize = 0;
+  FILE *fp = libr->fp;
+  Elf_Sym sym;
+  int idx;
+  int rv;
+
+  if(!libr || !p_func) {
+    rv = INJERR_OTHER;
+    goto cleanup;
+  }
+
+  rv = read_elf_ehdr(fp, &ehdr);
+  if (rv != 0) {
+    injector__set_errmsg("couldn't find ehdr");
+    goto cleanup;
+  }
+
+  fseek(fp, ehdr.e_shoff + ehdr.e_shstrndx * ehdr.e_shentsize, SEEK_SET);
+  rv = read_elf_shdr(fp, &shdr, ehdr.e_shentsize);
+  if (rv != 0) {
+      injector__set_errmsg("couldn't find shdr");
+      goto cleanup;
+  }
+  shstrtab_offset = shdr.sh_offset;
+
+  fseek(fp, ehdr.e_shoff, SEEK_SET);
+  for (idx = 0; idx < ehdr.e_shnum; idx++) {
+      fpos_t pos;
+      char buf[8];
+
+      rv = read_elf_shdr(fp, &shdr, ehdr.e_shentsize);
+      if (rv != 0) {
+          injector__set_errmsg("couldn't find shdr");
+          goto cleanup;
+      }
+      switch (shdr.sh_type) {
+      case SHT_STRTAB:
+          fgetpos(fp, &pos);
+          fseek(fp, shstrtab_offset + shdr.sh_name, SEEK_SET);
+          fgets(buf, sizeof(buf), fp);
+          fsetpos(fp, &pos);
+          if (strcmp(buf, ".dynstr") == 0) {
+              str_offset = shdr.sh_offset;
+              str_size = shdr.sh_size;
+          }
+          break;
+      case SHT_DYNSYM:
+          fgetpos(fp, &pos);
+          fseek(fp, shstrtab_offset + shdr.sh_name, SEEK_SET);
+          fgets(buf, sizeof(buf), fp);
+          fsetpos(fp, &pos);
+          if (strcmp(buf, ".dynsym") == 0) {
+              sym_offset = shdr.sh_offset;
+              sym_entsize = shdr.sh_entsize;
+              sym_num = shdr.sh_size / shdr.sh_entsize;
+          }
+          break;
+      }
+      if (sym_offset != 0 && str_offset != 0) {
+          break;
+      }
+  }
+  if (idx == ehdr.e_shnum) {
+      injector__set_errmsg(" failed to find the .dynstr and .dynsym sections.");
+      rv = INJERR_INVALID_ELF_FORMAT;
+      goto cleanup;
+  }
+  printf("dynsym: %lx, dynstr: %lx\n", sym_offset, str_offset);
+  if(!libr->strtab) {
+    libr->strtab = calloc(str_size ,1);
+    if (!libr->strtab) {
+      rv = INJERR_NO_MEMORY;
+      goto cleanup;
+    }
+  }
+
+  size_t n_read = 0;
+  fseek(fp, str_offset, SEEK_SET);
+  while((n_read != str_size) && !feof(fp)){
+    n_read += fread(libr->strtab, 1, str_size-n_read, fp);
+  }
+
+  fseek(fp, sym_offset, SEEK_SET);
+  for (idx = 0; idx < sym_num; idx++) {
+      memset(&sym, 0, sizeof(sym));
+      rv = read_elf_sym(fp, &sym, sym_entsize);
+      if (rv != 0) {
+          goto cleanup;
+      }
+      if (sym.st_name > str_size) {
+        printf("warn: strtab offset %d is invalid\n", sym.st_name);
+        continue;
+      }
+      else if (!strcmp(sym_name, &libr->strtab[sym.st_name])) {
+          sym_offset = sym.st_value;
+          break;
+      }
+  }
+
+  *p_func = libr->base + sym_offset;
+  rv = INJERR_SUCCESS;
+cleanup:
+  if(rv != INJERR_SUCCESS)
+    injector__set_errmsg("fuck");
+  return rv;
 }
 
 static int read_elf_ehdr(FILE *fp, Elf_Ehdr *ehdr)
